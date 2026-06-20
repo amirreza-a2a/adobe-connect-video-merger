@@ -6,10 +6,6 @@ import subprocess
 from datetime import datetime
 
 def get_time_from_xml(xml_file):
-    """
-    Extract the exact recording date and time from the XML metadata file.
-    Example format in XML: Sat May 23 10:10:59 2026
-    """
     if not os.path.exists(xml_file):
         return None
     try:
@@ -18,87 +14,146 @@ def get_time_from_xml(xml_file):
             match = re.search(r"([A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})", content)
             if match:
                 return datetime.strptime(match.group(1), "%a %b %d %H:%M:%S %Y")
-    except Exception as e:
-        print(f"⚠️ Error reading XML file {xml_file}: {e}")
+    except Exception:
+        pass
     return None
 
+def get_duration(file_path):
+    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path]
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return float(res.stdout.strip())
+    except Exception:
+        return 0.0
+
 def has_audio_stream(file_path):
-    cmd = f"ffprobe -v error -select_streams a -show_entries stream=codec_type -of default=noprint_wrappers=1:nokey=1 {file_path}"
-    res = subprocess.run(cmd.split(), stdout=subprocess.PIPE, text=True)
+    cmd = ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "default=noprint_wrappers=1:nokey=1", file_path]
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     return "audio" in res.stdout.strip()
 
-def main():
-    print("🔍 Parsing XML files and extracting timestamps...")
+def analyze_timeline():
+    print("🔍 فاز ۱: آنالیز تایم‌لاین و مهندسی زمان‌بندی...")
+    audio_candidates = [f for f in os.listdir('.') if f.startswith('cameraVoip') and f.endswith('.flv')]
+    video_candidates = [f for f in os.listdir('.') if f.startswith('screenshare') and f.endswith('.flv')]
     
-    # 1. فیلتر کردن فایل‌های صوتی خراب/خالی
-    all_audio_candidates = sorted([f for f in os.listdir('.') if f.startswith('cameraVoip') and f.endswith('.flv')])
-    audio_files = []
-    for a in all_audio_candidates:
-        if has_audio_stream(a):
-            audio_files.append(a)
-        else:
-            print(f"⚠️ فایل {a} استریم صوتی ندارد (احتمالاً خالی است) و نادیده گرفته شد.")
-
-    # 2. پیدا کردن هوشمند ویدیوی اصلی
-    screenshares = [f for f in os.listdir('.') if f.startswith('screenshare') and f.endswith('.flv')]
-    if screenshares:
-        main_video = max(screenshares, key=os.path.getsize)
-    else:
-        video_candidates = ['mainstream.flv', 'ftstage2.flv']
-        main_video = next((v for v in video_candidates if os.path.exists(v)), None)
-
-    if not main_video or not audio_files:
-        print("❌ Main video file or audio tracks could not be found.")
-        return
-
-    print(f"🎥 Main Video: {main_video}")
-    print(f"🎵 Audio Files: {', '.join(audio_files)}")
-
-    times = {}
-    v_time = get_time_from_xml(main_video.replace('.flv', '.xml'))
-    if v_time:
-        times[main_video] = v_time
+    valid_audios = [a for a in audio_candidates if has_audio_stream(a)]
+    
+    assets = []
+    all_times = []
+    
+    for f in valid_audios + video_candidates:
+        start_dt = get_time_from_xml(f.replace('.flv', '.xml'))
+        if start_dt:
+            all_times.append(start_dt)
+            assets.append({
+                'file': f, 
+                'start_dt': start_dt, 
+                'type': 'audio' if f in valid_audios else 'video'
+            })
+    
+    if not all_times:
+        print("❌ هیچ متادیتای زمانی (XML) یافت نشد.")
+        return None
         
-    for a in audio_files:
-        a_time = get_time_from_xml(a.replace('.flv', '.xml'))
-        if a_time:
-            times[a] = a_time
-
-    if not times:
-        print("❌ Time metadata not found in any XML files.")
-        return
-
-    base_time = min(times.values())
-
-    v_delay_sec = (times.get(main_video, base_time) - base_time).total_seconds()
-    v_offset_cmd = f"-itsoffset {v_delay_sec} " if v_delay_sec > 0 else ""
+    T0 = min(all_times)
     
-    inputs = [f"{v_offset_cmd}-i {main_video}"]
+    for asset in assets:
+        asset['offset_sec'] = (asset['start_dt'] - T0).total_seconds()
+        asset['duration'] = get_duration(asset['file'])
+        asset['end_sec'] = asset['offset_sec'] + asset['duration']
+        
+    total_duration = max([a['end_sec'] for a in assets])
+    return {'T0': T0, 'assets': assets, 'total_duration': total_duration}
+
+def process_media(timeline):
+    print("🛠 فاز ۲ و ۳: تولید فیلترهای مهندسی صدا و تصویر (Gap Filling)...")
+    assets = timeline['assets']
+    total_dur = timeline['total_duration']
+
+    audios = [a for a in assets if a['type'] == 'audio']
+    videos = [v for v in assets if v['type'] == 'video']
+    videos.sort(key=lambda x: x['offset_sec'])
+
+    inputs = []
     filter_complex = []
-    amix_inputs = ""
-    
-    for idx, a in enumerate(audio_files, start=1):
-        inputs.append(f"-i {a}")
-        a_delay_ms = int((times.get(a, base_time) - base_time).total_seconds() * 1000)
-        filter_complex.append(f"[{idx}:a]adelay={a_delay_ms}|{a_delay_ms}[a{idx}]")
-        amix_inputs += f"[a{idx}]"
+    input_idx = 0
 
-    filter_complex.append(f"{amix_inputs}amix=inputs={len(audio_files)}:dropout_transition=0[aout]")
+    # ----- پردازش صدا -----
+    amix_labels = ""
+    for a in audios:
+        inputs.append(f"-i {a['file']}")
+        delay_ms = int(a['offset_sec'] * 1000)
+        filter_complex.append(f"[{input_idx}:a]adelay={delay_ms}|{delay_ms}[a{input_idx}]")
+        amix_labels += f"[a{input_idx}]"
+        input_idx += 1
+
+    if audios:
+        filter_complex.append(f"{amix_labels}amix=inputs={len(audios)}:dropout_transition=0[aout]")
+    else:
+        # اگر کلاسی کلاً صدا نداشت، یک صدای خالی (سکوت) تولید کن
+        inputs.append("-f lavfi -i anullsrc")
+        filter_complex.append(f"[{input_idx}:a]anull[aout]")
+        input_idx += 1
+
+    # ----- پردازش تصویر و پر کردن گپ‌ها -----
+    video_concat_labels = ""
+    concat_count = 0
+    curr_time = 0.0
+
+    # استانداردسازی فریم‌ریت و رزولوشن برای چسباندن (Concat)
+    fps = 10
+    resolution = "1920x1088"
+
+    for v in videos:
+        inputs.append(f"-i {v['file']}")
+        v_idx = input_idx
+        input_idx += 1
+
+        gap = v['offset_sec'] - curr_time
+        if gap > 0.5: # پر کردن گپ با ویدیوی سیاه
+            filter_complex.append(f"color=c=black:s={resolution}:r={fps}:d={gap}[b{concat_count}]")
+            video_concat_labels += f"[b{concat_count}]"
+            concat_count += 1
+
+        # نرمال‌سازی ویدیوی اصلی
+        filter_complex.append(f"[{v_idx}:v]fps={fps},scale={resolution},format=yuv420p[v{concat_count}]")
+        video_concat_labels += f"[v{concat_count}]"
+        concat_count += 1
+
+        curr_time = v['end_sec']
+
+    # پر کردن گپ احتمالی از آخرین ویدیو تا پایان کلاس
+    end_gap = total_dur - curr_time
+    if end_gap > 0.5:
+        filter_complex.append(f"color=c=black:s={resolution}:r={fps}:d={end_gap}[b{concat_count}]")
+        video_concat_labels += f"[b{concat_count}]"
+        concat_count += 1
+
+    if concat_count > 0:
+        filter_complex.append(f"{video_concat_labels}concat=n={concat_count}:v=1:a=0[vout]")
+    else:
+        # اگر کلاسی کلاً اسکرین‌شیر نداشت، کل ویدیو رو سیاه کن
+        filter_complex.append(f"color=c=black:s={resolution}:r={fps}:d={total_dur}[vout]")
 
     filter_str = "; ".join(filter_complex)
-    inputs_str = " ".join(inputs)
-    output_file = "final_class_synced.mkv"
+    input_str = " ".join(inputs)
     
-    # 3. تغییر در مپ ویدیو (اضافه شدن علامت سؤال)
-    cmd = f'ffmpeg -y {inputs_str} -filter_complex "{filter_str}" -map 0:v? -map "[aout]" -c:v copy -c:a aac {output_file}'
+    out_file = "final_class_synced.mp4"
 
-    print("\n🎬 Rendering and mixing via FFmpeg (this might take a few moments)...")
+    # ----- فاز ۴: رندر نهایی -----
+    print(f"\n🎬 فاز ۴: در حال رندر به H.264 (این پروسه زمان‌بر است، لطفا شکیبا باشید)...")
+    cmd = f'ffmpeg -y {input_str} -filter_complex "{filter_str}" -map "[vout]" -map "[aout]" -c:v libx264 -preset veryfast -crf 26 -c:a aac -b:a 64k -t {total_dur} {out_file}'
     
     result = subprocess.run(cmd, shell=True)
     if result.returncode == 0:
-        print(f"\n✨ Processing complete! Final video generated: {output_file}")
+        print(f"\n✨ عالی! تدوین کلاس به پایان رسید: {out_file}")
     else:
-        print("\n❌ FFmpeg execution failed.")
+        print("\n❌ خطایی در حین اجرای FFmpeg رخ داد.")
+
+def main():
+    timeline = analyze_timeline()
+    if timeline:
+        process_media(timeline)
 
 if __name__ == "__main__":
     main()
