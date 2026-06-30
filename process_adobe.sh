@@ -1,62 +1,62 @@
 #!/bin/bash
 
-# Target directory to save the final synchronized videos
+# مسیر پوشه نهایی برای ذخیره ویدیوها
 OUTPUT_DIR="$HOME/Downloads/adobeVideo"
 mkdir -p "$OUTPUT_DIR"
 
-# Directory containing the downloaded Adobe Connect zip files
+# مسیر پوشه دانلودها که فایل‌های زیپ در آن قرار دارند
 DOWNLOADS_DIR="$HOME/Downloads/adobeZip"
 
-# Temporary directory for extracting each class archive
+# پوشه موقت برای اکسترکت کردن هر کلاس
 TMP_DIR="$DOWNLOADS_DIR/tmp_extract"
 
-echo "🚀 Adobe Connect video merging and automation process started..."
-echo "📂 Final videos will be saved to: $OUTPUT_DIR"
+echo "🚀 فرآیند خودکارسازی و ترکیب ویدیوهای ادوبی کانکت آغاز شد..."
+echo "📂 ویدیوهای نهایی در این مسیر ذخیره می‌شوند: $OUTPUT_DIR"
 echo "--------------------------------------------------------"
 
-# Change directory to the downloads folder
+# ورود به پوشه دانلودها
 cd "$DOWNLOADS_DIR" || exit
 
 counter=1
 
-# Process zip files starting with 'p', sorted from oldest to newest by modification time
-# Using process substitution to safely handle potential spaces in filenames
-while read -r zip_file; do
+# پیدا کردن تمام فایل‌های زیپی که با p شروع می‌شوند و مرتب‌سازی بر اساس زمان (قدیمی به جدید)
+for zip_file in $(ls -tr p*.zip 2>/dev/null); do
     if [ -f "$zip_file" ]; then
-        # Format counter with leading zeros (e.g., 01, 02, 03...)
+        # فرمت دادن به شماره‌گذاری (به صورت 01, 02, 03 و...)
         formatted_counter=$(printf "%02d" $counter)
         
-        echo "📦 [$formatted_counter] Processing zip file: $zip_file"
+        echo "📦 [$formatted_counter] در حال پردازش فایل زیپ: $zip_file"
         
-        # Create temp directory and extract the zip file quietly
+        # ساخت پوشه موقت و اکسترکت کردن فایل زیپ به صورت بی‌صدا (-q)
         mkdir -p "$TMP_DIR"
         unzip -q "$zip_file" -d "$TMP_DIR"
         
-        # Move into the temp directory to execute the python merger script
+        # ورود به پوشه موقت
         cd "$TMP_DIR" || continue
         
-        # Execute the python script (checks if available in PATH, otherwise falls back)
+        # اجرای اسکریپت پایتون هوشمند
         if command -v mergeVideoAdobe.py &> /dev/null; then
             mergeVideoAdobe.py
         else
-            python3 "$HOME/Scripts/merge.py"
+            # دستور کمکی در صورتی که به هر دلیل PATH در لحظه اجرا لود نشده باشد
+            python3 "$HOME/Scripts/mergeVideoAdobe.py"
         fi
         
-        # Verify if the synchronized output file was successfully created
-        if [ -f "final_class_synced.mkv" ]; then
-            mv "final_class_synced.mkv" "$OUTPUT_DIR/class_$formatted_counter.mkv"
-            echo "✅ Video successfully saved as class_$formatted_counter.mkv"
+        # 🌟 اصلاح اصلی: بررسی وجود فایل .mp4 و انتقال آن با همان پسوند
+        if [ -f "final_class_synced.mp4" ]; then
+            mv "final_class_synced.mp4" "$OUTPUT_DIR/class_$formatted_counter.mp4"
+            echo "✅ ویدیو با موفقیت به نام class_$formatted_counter.mp4 ذخیره شد."
         else
-            echo "❌ Error: Output file was not generated for $zip_file"
+            echo "❌ خطا: فایل خروجی برای $zip_file ایجاد نشد."
         fi
         
-        # Return to the downloads directory and clean up the temporary files
+        # بازگشت به پوشه دانلودها و پاکسازی فایل‌های اکسترکت شده برای پارت بعدی
         cd "$DOWNLOADS_DIR" || exit
         rm -rf "$TMP_DIR"
         
         echo "--------------------------------------------------------"
         ((counter++))
     fi
-done < <(ls -tr p*.zip 2>/dev/null)
+done
 
-echo "✨ Operation completed successfully! All classes are organized and ready."
+echo "✨ تمام فایل‌ها با موفقیت پردازش شدند!"
