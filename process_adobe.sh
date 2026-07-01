@@ -19,8 +19,16 @@ cd "$DOWNLOADS_DIR" || exit
 
 counter=1
 
-# پیدا کردن تمام فایل‌های زیپی که با p شروع می‌شوند و مرتب‌سازی بر اساس زمان (قدیمی به جدید)
-for zip_file in $(ls -tr *.zip 2>/dev/null); do
+# ۱. لیست فایل‌های شماره‌دار (مرتب‌شده بر اساس شماره به صورت الفبایی/عددی پیش‌فرض)
+numbered_files=$(ls [0-9]*.zip 2>/dev/null)
+
+# ۲. لیست فایل‌های بدون شماره (مرتب‌شده بر اساس زمان دانلود از قدیمی به جدید)
+unnumbered_files=$(ls -tr [!0-9]*.zip 2>/dev/null)
+
+# ۳. ترکیب دو لیست (ابتدا شماره‌دارها، سپس بدون شماره‌ها)
+all_files="$numbered_files $unnumbered_files"
+
+for zip_file in $all_files; do
     if [ -f "$zip_file" ]; then
         # فرمت دادن به شماره‌گذاری (به صورت 01, 02, 03 و...)
         formatted_counter=$(printf "%02d" $counter)
@@ -42,7 +50,7 @@ for zip_file in $(ls -tr *.zip 2>/dev/null); do
             python3 "$HOME/Scripts/mergeVideoAdobe.py"
         fi
         
-        # 🌟 اصلاح اصلی: بررسی وجود فایل .mp4 و انتقال آن با همان پسوند
+        # بررسی وجود فایل .mp4 و انتقال آن با همان پسوند
         if [ -f "final_class_synced.mp4" ]; then
             mv "final_class_synced.mp4" "$OUTPUT_DIR/class_$formatted_counter.mp4"
             echo "✅ ویدیو با موفقیت به نام class_$formatted_counter.mp4 ذخیره شد."
