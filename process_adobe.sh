@@ -20,7 +20,7 @@ cd "$DOWNLOADS_DIR" || exit
 counter=1
 
 # پیدا کردن تمام فایل‌های زیپی که با p شروع می‌شوند و مرتب‌سازی بر اساس زمان (قدیمی به جدید)
-for zip_file in $(ls -tr p*.zip 2>/dev/null); do
+for zip_file in $(ls -tr *.zip 2>/dev/null); do
     if [ -f "$zip_file" ]; then
         # فرمت دادن به شماره‌گذاری (به صورت 01, 02, 03 و...)
         formatted_counter=$(printf "%02d" $counter)
